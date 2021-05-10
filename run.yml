@@ -1,0 +1,82 @@
+# Run this playbook after bootstrap.yml
+# meaning the default user with passwordless sudo is present on the host already
+---
+- hosts: servers
+  become: yes
+  tasks:
+    - name: Verify Ansible meets version requirement
+      assert:
+        that: "ansible_version.full is version_compare('2.10', '>=')"
+        msg: "You must update Ansible to at least 2.10 to use this playbook."
+
+    - name: Upgrade all packages (RedHat)
+      yum:
+        name: "*"
+        state: latest
+      when: ansible_os_family == 'RedHat'
+
+    - name: Upgrade all packages (Debian)
+      apt:
+        name: "*"
+        state: latest
+      when: ansible_os_family == 'Debian'
+
+    - name: Activate EPEL repository (RedHat)
+      package:
+        name: epel-release
+        state: present
+      when: ansible_os_family == 'RedHat'
+
+    - name: Install needed packages (RedHat)
+      package:
+        name:
+          - firewalld
+          - fail2ban
+        state: present
+        update_cache: yes
+      when: ansible_os_family == 'RedHat'
+
+    - name: Install needed packages (Debian)
+      package:
+        name: fail2ban
+        state: present
+        update_cache: yes
+      when: ansible_os_family == 'Debian'
+
+    - name: Provision basic SSH fail2ban jail file
+      template:
+        src: fail2ban_ssh.j2
+        dest: /etc/fail2ban/jail.d/sshd.local
+        owner: root
+        group: root
+        mode: 0644
+      notify: restart fail2ban
+
+    - name: Start fail2ban and enable it on boot
+      service: 
+        name: fail2ban
+        state: started
+        enabled: yes
+
+    - name: Start firewalld and enable it on boot (RedHat)
+      service: 
+        name: firewalld
+        state: started
+        enabled: yes
+      when: ansible_os_family == 'RedHat'
+
+    - name: Start ufw and enable it on boot (Ubuntu)
+      community.general.ufw: 
+        state: enabled
+        rule: allow
+        name: OpenSSH
+      when: ansible_distribution == 'Ubuntu'
+
+    - name: Reboot machine
+      reboot:
+
+  handlers:
+    - name: restart fail2ban
+      service:
+        name: fail2ban
+        state: restarted

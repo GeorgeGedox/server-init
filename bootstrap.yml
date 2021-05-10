@@ -1,0 +1,63 @@
+# This playbook will try to connect to all hosts using the root user
+# It will create the defined sudo users and harden the SSH config
+# It will then reconnect using the default user set in ansible.cfg and restart the ssh service to apply the changes
+---
+- hosts: servers
+  gather_facts: no
+  become: yes
+  tasks:
+    - name: Create new users
+      user:
+        name: "{{ item.username }}"
+        state: present
+        create_home: yes
+        shell: /bin/bash
+      loop: "{{ bootstrap_sudo_users }}"
+
+    - name: Add selected users to passwordless sudoers
+      lineinfile:
+        dest: /etc/sudoers
+        regexp: '^{{ item.username }}'
+        line: '{{ item.username }} ALL=(ALL) NOPASSWD: ALL'
+        state: present
+        validate: 'visudo -cf %s'
+        mode: 0644
+      with_items: "{{ bootstrap_sudo_users }}"
+
+    - name: Set authorized keys for the new users
+      authorized_key:
+        user: "{{ item.username }}"
+        key: "{{ item.public_keys }}"
+        state: present
+      loop: "{{ bootstrap_sudo_users }}"
+
+    - name: Harden SSH configuration
+      lineinfile:
+        dest: "{{ security_ssh_config_path }}"
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+        validate: 'sshd -T -f %s'
+        mode: 0644
+      with_items:
+        - regexp: "^PasswordAuthentication"
+          line: "PasswordAuthentication {{ security_ssh_password_authentication }}"
+        - regexp: "^PermitRootLogin"
+          line: "PermitRootLogin {{ security_ssh_permit_root_login }}"
+        - regexp: "^Port"
+          line: "Port {{ security_ssh_port }}"
+        - regexp: "^UseDNS"
+          line: "UseDNS {{ security_ssh_usedns }}"
+        - regexp: "^PermitEmptyPasswords"
+          line: "PermitEmptyPasswords {{ security_ssh_permit_empty_password }}"
+        - regexp: "^ChallengeResponseAuthentication"
+          line: "ChallengeResponseAuthentication {{ security_ssh_challenge_response_auth }}"
+        - regexp: "^GSSAPIAuthentication"
+          line: "GSSAPIAuthentication {{ security_ssh_gss_api_authentication }}"
+        - regexp: "^X11Forwarding"
+          line: "X11Forwarding {{ security_ssh_x11_forwarding }}"
+
+    - name: Restart ssh daemon
+      service:
+        name: sshd
+        state: restarted
